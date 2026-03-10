@@ -610,6 +610,43 @@ For self-hosted deployments, use the included `docker-compose.yml` with producti
 
 ---
 
+## Database Migrations
+
+Scout AI uses [Alembic](https://alembic.sqlalchemy.org/) for database schema migrations.
+
+### Setup
+
+Alembic reads `DATABASE_URL` from the environment. Set it before running any commands:
+
+```bash
+export DATABASE_URL="postgresql+asyncpg://scout:scout_secret@localhost:5432/scout_ai"
+```
+
+### Common Commands
+
+```bash
+# Apply all pending migrations
+alembic upgrade head
+
+# Create a new migration (autogenerate from model changes)
+alembic revision --autogenerate -m "description_of_change"
+
+# Downgrade one revision
+alembic downgrade -1
+
+# Show current revision
+alembic current
+
+# Show migration history
+alembic history --verbose
+```
+
+### Docker
+
+The API service in `docker-compose.yml` automatically runs `alembic upgrade head` before starting, ensuring the database schema is always up to date.
+
+---
+
 ## License
 
 This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
