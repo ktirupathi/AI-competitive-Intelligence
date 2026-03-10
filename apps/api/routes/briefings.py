@@ -1,0 +1,89 @@
+"""Briefing routes: list, get, and generate briefings."""
+
+import uuid
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+
+from ..deps import CurrentUser, DbSession
+from ..schemas.briefing import (
+    BriefingGenerateRequest,
+    BriefingListResponse,
+    BriefingRead,
+    BriefingSummary,
+)
+from ..services.briefing_service import BriefingService
+
+router = APIRouter()
+
+
+@router.get("", response_model=BriefingListResponse)
+async def list_briefings(
+    db: DbSession,
+    user: CurrentUser,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=50),
+) -> BriefingListResponse:
+    """List all briefings for the current user."""
+    service = BriefingService(db)
+    items, total = await service.list_briefings(user.id, offset, limit)
+    return BriefingListResponse(
+        items=[BriefingRead.model_validate(b) for b in items],
+        total=total,
+    )
+
+
+@router.get("/latest", response_model=BriefingRead | None)
+async def get_latest_briefing(
+    db: DbSession,
+    user: CurrentUser,
+) -> BriefingRead | None:
+    """Get the most recent briefing."""
+    service = BriefingService(db)
+    items, _ = await service.list_briefings(user.id, offset=0, limit=1)
+    if not items:
+        return None
+    return BriefingRead.model_validate(items[0])
+
+
+@router.get("/{briefing_id}", response_model=BriefingRead)
+async def get_briefing(
+    briefing_id: uuid.UUID,
+    db: DbSession,
+    user: CurrentUser,
+) -> BriefingRead:
+    """Get a single briefing by ID."""
+    service = BriefingService(db)
+    briefing = await service.get_briefing(briefing_id, user.id)
+    if not briefing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Briefing not found",
+        )
+    return BriefingRead.model_validate(briefing)
+
+
+@router.post("/generate", response_model=BriefingRead, status_code=status.HTTP_201_CREATED)
+async def generate_briefing(
+    data: BriefingGenerateRequest,
+    db: DbSession,
+    user: CurrentUser,
+) -> BriefingRead:
+    """Manually trigger briefing generation.
+
+    This calls Claude to analyze recent competitor activity and produce
+    a structured intelligence briefing.
+    """
+    service = BriefingService(db)
+    try:
+        briefing = await service.generate_briefing(
+            user=user,
+            competitor_ids=data.competitor_ids,
+            frequency=data.frequency,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    await db.commit()
+    return BriefingRead.model_validate(briefing)
