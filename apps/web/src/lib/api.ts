@@ -112,3 +112,169 @@ export async function createCheckoutSession(priceId: string) {
   const { data } = await api.post("/billing/checkout", { priceId });
   return data;
 }
+
+// ---------------------------------------------------------------------------
+// Workspace APIs
+// ---------------------------------------------------------------------------
+
+export async function getWorkspaces() {
+  const { data } = await api.get("/workspaces");
+  return data;
+}
+
+export async function createWorkspace(payload: {
+  name: string;
+  plan?: string;
+}) {
+  const { data } = await api.post("/workspaces", payload);
+  return data;
+}
+
+export async function getWorkspace(id: string) {
+  const { data } = await api.get(`/workspaces/${id}`);
+  return data;
+}
+
+export async function getWorkspaceMembers(workspaceId: string) {
+  const { data } = await api.get(`/workspaces/${workspaceId}/members`);
+  return data;
+}
+
+export async function inviteWorkspaceMember(
+  workspaceId: string,
+  payload: { email: string; role?: string }
+) {
+  const { data } = await api.post(
+    `/workspaces/${workspaceId}/members`,
+    payload
+  );
+  return data;
+}
+
+export async function removeWorkspaceMember(
+  workspaceId: string,
+  userId: string
+) {
+  await api.delete(`/workspaces/${workspaceId}/members/${userId}`);
+}
+
+export async function getWorkspaceUsage(workspaceId: string) {
+  const { data } = await api.get(`/workspaces/${workspaceId}/usage`);
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Timeline & History APIs
+// ---------------------------------------------------------------------------
+
+export async function getCompetitorTimeline(
+  competitorId: string,
+  params?: { since?: string; limit?: number }
+) {
+  const { data } = await api.get(`/competitors/${competitorId}/timeline`, {
+    params,
+  });
+  return data;
+}
+
+export async function getBriefingHistory(params?: {
+  competitor_id?: string;
+  date_from?: string;
+  date_to?: string;
+  frequency?: string;
+  offset?: number;
+  limit?: number;
+}) {
+  const { data } = await api.get("/briefings/history", { params });
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Search API
+// ---------------------------------------------------------------------------
+
+export async function semanticSearch(payload: {
+  query: string;
+  source_type?: string;
+  limit?: number;
+}) {
+  const { data } = await api.post("/search", payload);
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Alert APIs
+// ---------------------------------------------------------------------------
+
+export async function getAlerts(
+  workspaceId: string,
+  params?: {
+    severity?: string;
+    alert_type?: string;
+    is_read?: boolean;
+    offset?: number;
+    limit?: number;
+  }
+) {
+  const { data } = await api.get("/alerts", {
+    params: { workspace_id: workspaceId, ...params },
+  });
+  return data;
+}
+
+export async function markAlertsRead(
+  workspaceId: string,
+  alertIds: string[]
+) {
+  const { data } = await api.post("/alerts/mark-read", {
+    alert_ids: alertIds,
+  }, { params: { workspace_id: workspaceId } });
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Public & Export APIs
+// ---------------------------------------------------------------------------
+
+export async function shareInsight(insightId: string) {
+  const { data } = await api.post(`/public/insights/${insightId}/share`);
+  return data;
+}
+
+export async function unshareInsight(insightId: string) {
+  const { data } = await api.post(`/public/insights/${insightId}/unshare`);
+  return data;
+}
+
+export async function exportReport(payload: {
+  format: "pdf" | "markdown" | "notion";
+  briefing_id?: string;
+  competitor_id?: string;
+}) {
+  const { data } = await api.post("/public/export", payload);
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Admin APIs
+// ---------------------------------------------------------------------------
+
+export async function getAgentHealth() {
+  const { data } = await api.get("/admin/agents");
+  return data;
+}
+
+export async function getAuditLogs(
+  workspaceId: string,
+  params?: {
+    action?: string;
+    resource?: string;
+    offset?: number;
+    limit?: number;
+  }
+) {
+  const { data } = await api.get("/admin/audit-logs", {
+    params: { workspace_id: workspaceId, ...params },
+  });
+  return data;
+}

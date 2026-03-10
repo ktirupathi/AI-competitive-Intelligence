@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /api
+Disallow: /settings
+Disallow: /competitors
+Disallow: /briefings
+Disallow: /integrations
+
+Sitemap: https://scoutai.dev/sitemap.xml

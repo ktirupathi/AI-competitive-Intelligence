@@ -1,16 +1,21 @@
-"""Briefing routes: list, get, and generate briefings."""
+"""Briefing routes: list, get, generate, and history."""
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from sqlalchemy import select
 
 from ..deps import CurrentUser, DbSession
+from ..models.briefing import Briefing
+from ..models.competitor import Competitor
 from ..schemas.briefing import (
     BriefingGenerateRequest,
     BriefingListResponse,
     BriefingRead,
     BriefingSummary,
 )
+from ..services.audit_log_service import log_action
 from ..services.briefing_service import BriefingService
 
 router = APIRouter()
@@ -85,5 +90,48 @@ async def generate_briefing(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         )
+    await log_action(
+        db,
+        action="generate",
+        resource="briefing",
+        user_id=user.id,
+        resource_id=str(briefing.id),
+    )
     await db.commit()
     return BriefingRead.model_validate(briefing)
+
+
+@router.get("/history", response_model=BriefingListResponse)
+async def briefing_history(
+    db: DbSession,
+    user: CurrentUser,
+    competitor_id: uuid.UUID | None = Query(None),
+    date_from: datetime | None = Query(None),
+    date_to: datetime | None = Query(None),
+    frequency: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+) -> BriefingListResponse:
+    """Get briefing history with filtering by competitor, date range, and frequency."""
+    from sqlalchemy import func
+
+    base = select(Briefing).where(Briefing.user_id == user.id)
+
+    if date_from:
+        base = base.where(Briefing.period_start >= date_from)
+    if date_to:
+        base = base.where(Briefing.period_end <= date_to)
+    if frequency:
+        base = base.where(Briefing.frequency == frequency)
+
+    count_q = select(func.count()).select_from(base.subquery())
+    total = (await db.execute(count_q)).scalar() or 0
+
+    query = base.order_by(Briefing.created_at.desc()).offset(offset).limit(limit)
+    result = await db.execute(query)
+    items = list(result.scalars().all())
+
+    return BriefingListResponse(
+        items=[BriefingRead.model_validate(b) for b in items],
+        total=total,
+    )

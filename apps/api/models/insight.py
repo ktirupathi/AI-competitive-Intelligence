@@ -22,6 +22,12 @@ class Insight(Base):
         nullable=False,
         index=True,
     )
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     category: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # strategy | product | pricing | marketing | hiring | sentiment
@@ -40,6 +46,10 @@ class Insight(Base):
 
     is_read: Mapped[bool] = mapped_column(default=False)
     is_dismissed: Mapped[bool] = mapped_column(default=False)
+
+    # Public sharing
+    is_public: Mapped[bool] = mapped_column(default=False)
+    public_token: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
 
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

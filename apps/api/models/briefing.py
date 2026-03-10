@@ -22,6 +22,12 @@ class Briefing(Base):
         nullable=False,
         index=True,
     )
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     frequency: Mapped[str] = mapped_column(
         String(20), default="weekly"

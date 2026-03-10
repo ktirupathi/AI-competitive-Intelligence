@@ -23,12 +23,29 @@ celery.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     task_default_queue="default",
+    # Global retry policy
+    task_default_retry_delay=60,
+    task_max_retries=3,
+    task_reject_on_worker_lost=True,
+    task_time_limit=600,  # 10 minute hard limit
+    task_soft_time_limit=540,  # 9 minute soft limit
+    # Retry with exponential backoff
+    task_annotations={
+        "*": {
+            "max_retries": 3,
+            "default_retry_delay": 60,
+            "retry_backoff": True,
+            "retry_backoff_max": 600,
+            "retry_jitter": True,
+        }
+    },
     task_routes={
         "apps.api.tasks.monitoring.*": {"queue": "monitoring"},
         "apps.api.tasks.briefing_generation.*": {"queue": "briefings"},
         "apps.api.tasks.review_monitoring.*": {"queue": "monitoring"},
         "apps.api.tasks.social_monitoring.*": {"queue": "monitoring"},
         "apps.api.tasks.job_monitoring.*": {"queue": "monitoring"},
+        "apps.api.tasks.alert_processing.*": {"queue": "alerts"},
     },
     beat_schedule={
         # Website monitoring — daily at 2 AM UTC
@@ -69,6 +86,11 @@ celery.conf.update(
                 day_of_week=settings.briefing_generation_day,
             ),
         },
+        # Alert processing — every 15 minutes
+        "process-alerts": {
+            "task": "apps.api.tasks.alert_processing.check_and_send_alerts",
+            "schedule": crontab(minute="*/15"),
+        },
     },
 )
 
@@ -79,5 +101,6 @@ celery.autodiscover_tasks(
         "apps.api.tasks.review_monitoring",
         "apps.api.tasks.social_monitoring",
         "apps.api.tasks.job_monitoring",
+        "apps.api.tasks.alert_processing",
     ]
 )

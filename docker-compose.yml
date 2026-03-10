@@ -15,6 +15,7 @@ services:
       - ./database/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql
       - ./database/migrations/002_schema_enhancements.sql:/docker-entrypoint-initdb.d/002_schema_enhancements.sql
       - ./database/migrations/003_clustering_predictions.sql:/docker-entrypoint-initdb.d/003_clustering_predictions.sql
+      - ./database/migrations/004_production_upgrade.sql:/docker-entrypoint-initdb.d/004_production_upgrade.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U scout"]
       interval: 5s
@@ -91,6 +92,41 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-alerts:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: celery -A apps.api.celery_app worker --loglevel=info --concurrency=2 -Q alerts
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scout}:${POSTGRES_PASSWORD:-scout_secret}@db:5432/${POSTGRES_DB:-scout_ai}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  flower:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: celery -A apps.api.celery_app flower --port=5555
+    restart: unless-stopped
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scout}:${POSTGRES_PASSWORD:-scout_secret}@db:5432/${POSTGRES_DB:-scout_ai}
+      REDIS_URL: redis://redis:6379/0
+      FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:-admin:admin}
+    depends_on:
       redis:
         condition: service_healthy
 
