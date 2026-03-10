@@ -1,0 +1,29 @@
+# Ruff linter + formatter configuration
+# https://docs.astral.sh/ruff/configuration/
+
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function call in argument defaults (FastAPI Depends)
+    "SIM108", # use ternary operator (readability preference)
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["B011", "SIM300"]
+"apps/api/alembic/**" = ["F401", "F403", "E402"]
+
+[lint.isort]
+known-first-party = ["agents", "apps"]
