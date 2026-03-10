@@ -251,4 +251,6 @@ class PipelineState(TypedDict, total=False):
 
     # --- Metadata ---
     errors: List[Dict[str, Any]]
+    data_sources_available: List[str]
+    validation_stats: Dict[str, Any]
     finished_at: Optional[str]

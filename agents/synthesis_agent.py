@@ -179,15 +179,47 @@ async def synthesis_agent(state: PipelineState) -> PipelineState:
     predictions = state.get("predictions", [])
     errors: List[Dict[str, Any]] = list(state.get("errors", []))
 
+    # Track data completeness — which sources contributed data
+    source_counts = {
+        "web_monitor": len(changes),
+        "news": len(news_items),
+        "jobs": len(job_postings),
+        "reviews": len(reviews),
+        "social": len(social_posts),
+    }
+    sources_with_data = [name for name, count in source_counts.items() if count > 0]
+    total_sources = len(sources_with_data)
+    data_completeness = total_sources / 5.0  # 5 collection agents
+
+    logger.info(
+        "Synthesis data completeness: %.0f%% (%d/5 sources: %s)",
+        data_completeness * 100, total_sources, ", ".join(sources_with_data) or "none",
+    )
+
     # Check if we have any signals at all
-    total_signals = len(changes) + len(news_items) + len(job_postings) + len(reviews) + len(social_posts)
+    total_signals = sum(source_counts.values())
     if total_signals == 0:
-        logger.warning("No signals collected — returning empty briefing")
+        logger.warning("No signals collected — returning error briefing")
+        error_briefing = _empty_briefing()
+        error_briefing["executive_summary"] = (
+            "No data was collected from any source. All collection agents either "
+            "failed or returned empty results. Check pipeline errors for details."
+        )
         return {
             "insights": [],
-            "briefing": _empty_briefing(),
+            "briefing": error_briefing,
             "errors": errors,
         }
+
+    # Add partial data note to the prompt if not all sources contributed
+    partial_note = ""
+    if data_completeness < 1.0:
+        missing = [name for name, count in source_counts.items() if count == 0]
+        partial_note = (
+            f"\n\nNOTE: Only {total_sources}/5 data sources returned results "
+            f"(missing: {', '.join(missing)}). Generate the best briefing "
+            f"possible from available data and note the limited coverage.\n"
+        )
 
     # Build the synthesis prompt with clustering and prediction context
     user_msg = SYNTHESIS_USER.format(
@@ -199,7 +231,7 @@ async def synthesis_agent(state: PipelineState) -> PipelineState:
         clusters_json=_safe_json(signal_clusters) if signal_clusters else "No clusters generated.",
         predictions_json=_safe_json(predictions) if predictions else "No predictions generated.",
         competitors_json=_safe_json(competitors),
-    )
+    ) + partial_note
 
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic.api_key)
 
@@ -223,11 +255,20 @@ async def synthesis_agent(state: PipelineState) -> PipelineState:
         raw_json = json.loads(raw_text)
         briefing = _validate_and_normalise(raw_json, competitors)
 
+        # Add data completeness metadata to the briefing
+        if data_completeness < 1.0:
+            completeness_note = (
+                f" [Data completeness: {data_completeness:.0%} — "
+                f"sources: {', '.join(sources_with_data)}]"
+            )
+            briefing["executive_summary"] += completeness_note
+
         logger.info(
-            "Synthesis complete: %d insights, %d predictions, %d plays",
+            "Synthesis complete: %d insights, %d predictions, %d plays (data: %.0f%%)",
             len(briefing["top_insights"]),
             len(briefing["predictive_signals"]),
             len(briefing["recommended_plays"]),
+            data_completeness * 100,
         )
 
         return {

@@ -158,7 +158,7 @@ class TestSynthesisAgent:
 
         result = await synthesis_agent(state)
 
-        assert result["briefing"]["executive_summary"] == "Insufficient data to generate a briefing."
+        assert "No data was collected" in result["briefing"]["executive_summary"]
         assert result["insights"] == []
 
     @pytest.mark.asyncio

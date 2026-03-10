@@ -10,12 +10,16 @@ Orchestrates the full competitive-intelligence workflow:
 Collection agents (web_monitor, news, jobs, reviews, social) run in
 parallel fan-out.  Clustering, prediction, synthesis, and delivery
 run sequentially afterwards.
+
+Includes circuit breaker pattern: if an agent fails 3 consecutive
+times across pipeline runs, it is skipped for 30 minutes.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import traceback
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -34,6 +38,53 @@ from agents.web_monitor_agent import web_monitor_agent
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Circuit breaker state (module-level, persists across pipeline runs)
+# ---------------------------------------------------------------------------
+
+class _CircuitBreaker:
+    """Track consecutive failures per agent and skip if tripped."""
+
+    FAILURE_THRESHOLD = 3
+    COOLDOWN_SECONDS = 30 * 60  # 30 minutes
+
+    def __init__(self) -> None:
+        self._failures: Dict[str, int] = {}
+        self._tripped_at: Dict[str, datetime] = {}
+
+    def record_failure(self, agent_name: str) -> None:
+        self._failures[agent_name] = self._failures.get(agent_name, 0) + 1
+        if self._failures[agent_name] >= self.FAILURE_THRESHOLD:
+            self._tripped_at[agent_name] = datetime.now(timezone.utc)
+            logger.warning(
+                "Circuit breaker TRIPPED for %s after %d consecutive failures. "
+                "Skipping for %d minutes.",
+                agent_name, self._failures[agent_name],
+                self.COOLDOWN_SECONDS // 60,
+            )
+
+    def record_success(self, agent_name: str) -> None:
+        self._failures[agent_name] = 0
+        self._tripped_at.pop(agent_name, None)
+
+    def is_open(self, agent_name: str) -> bool:
+        tripped = self._tripped_at.get(agent_name)
+        if tripped is None:
+            return False
+        elapsed = (datetime.now(timezone.utc) - tripped).total_seconds()
+        if elapsed >= self.COOLDOWN_SECONDS:
+            # Reset after cooldown
+            logger.info("Circuit breaker RESET for %s after cooldown", agent_name)
+            self._failures[agent_name] = 0
+            del self._tripped_at[agent_name]
+            return False
+        return True
+
+
+_circuit_breaker = _CircuitBreaker()
+
+
 # ---------------------------------------------------------------------------
 # Wrapper nodes that merge parallel results into the shared state
 # ---------------------------------------------------------------------------
@@ -43,27 +94,45 @@ logger = logging.getLogger(__name__)
 
 
 async def _with_retries(fn, state: PipelineState, agent_name: str) -> PipelineState:
-    """Execute an agent function with configurable retry logic."""
+    """Execute an agent function with configurable retry logic and circuit breaker."""
+    # Check circuit breaker first
+    if _circuit_breaker.is_open(agent_name):
+        logger.warning("Circuit breaker OPEN for %s — skipping agent", agent_name)
+        return {
+            "errors": list(state.get("errors", [])) + [
+                {
+                    "agent": agent_name,
+                    "error": f"Circuit breaker open — agent skipped after {_CircuitBreaker.FAILURE_THRESHOLD} consecutive failures",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "recoverable": True,
+                }
+            ],
+        }
+
     max_retries = settings.pipeline.agent_max_retries
     delay = settings.pipeline.agent_retry_delay_seconds
 
     last_exc: Optional[Exception] = None
     for attempt in range(1, max_retries + 1):
         try:
-            return await fn(state)
+            result = await fn(state)
+            _circuit_breaker.record_success(agent_name)
+            return result
         except Exception as exc:
             last_exc = exc
             logger.warning(
-                "%s failed (attempt %d/%d): %s",
+                "%s failed (attempt %d/%d): %s\n%s",
                 agent_name,
                 attempt,
                 max_retries,
                 exc,
+                traceback.format_exc(),
             )
             if attempt < max_retries:
                 await asyncio.sleep(delay * attempt)
 
-    # All retries exhausted — return error info without crashing pipeline
+    # All retries exhausted — record failure for circuit breaker
+    _circuit_breaker.record_failure(agent_name)
     logger.error("%s failed after %d attempts: %s", agent_name, max_retries, last_exc)
     return {
         "errors": list(state.get("errors", [])) + [
@@ -71,6 +140,7 @@ async def _with_retries(fn, state: PipelineState, agent_name: str) -> PipelineSt
                 "agent": agent_name,
                 "error": str(last_exc),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "recoverable": True,
             }
         ],
     }
@@ -184,7 +254,7 @@ async def _cluster_and_predict(state: PipelineState, phase: str) -> PipelineStat
             return {"signal_clusters": clusters, "errors": errors}
         except Exception as exc:
             logger.error("Signal clustering failed: %s", exc)
-            errors.append({"agent": "clustering", "error": str(exc), "timestamp": datetime.now(timezone.utc).isoformat()})
+            errors.append({"agent": "clustering", "error": str(exc), "timestamp": datetime.now(timezone.utc).isoformat(), "recoverable": True})
             return {"signal_clusters": [], "errors": errors}
 
     else:  # predict
@@ -242,7 +312,7 @@ async def _cluster_and_predict(state: PipelineState, phase: str) -> PipelineStat
             return {"predictions": predictions, "errors": errors}
         except Exception as exc:
             logger.error("Prediction generation failed: %s", exc)
-            errors.append({"agent": "prediction", "error": str(exc), "timestamp": datetime.now(timezone.utc).isoformat()})
+            errors.append({"agent": "prediction", "error": str(exc), "timestamp": datetime.now(timezone.utc).isoformat(), "recoverable": True})
             return {"predictions": [], "errors": errors}
 
 
@@ -258,10 +328,21 @@ async def node_delivery(state: PipelineState) -> PipelineState:
 # Fan-out / fan-in helper
 # ---------------------------------------------------------------------------
 
+_AGENT_SOURCE_MAP = {
+    "web_monitor": ("snapshots", "changes"),
+    "news": ("news_items",),
+    "job": ("job_postings",),
+    "review": ("reviews",),
+    "social": ("social_posts",),
+}
+
+
 async def node_collect(state: PipelineState) -> PipelineState:
     """
     Run all five collection agents concurrently and merge their results
     into a single state update.  This is the fan-out node.
+
+    Tracks which data sources contributed via data_sources_available.
     """
     tasks = [
         _with_retries(web_monitor_agent, state, "web_monitor"),
@@ -270,26 +351,36 @@ async def node_collect(state: PipelineState) -> PipelineState:
         _with_retries(review_agent, state, "review"),
         _with_retries(social_agent, state, "social"),
     ]
+    agent_names = ["web_monitor", "news", "job", "review", "social"]
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     merged: Dict[str, Any] = {"errors": list(state.get("errors", []))}
+    data_sources: List[str] = []
 
-    for res in results:
+    for agent_name, res in zip(agent_names, results):
         if isinstance(res, Exception):
-            logger.error("Collection task raised: %s", res)
+            logger.error("Collection task %s raised: %s", agent_name, res)
             merged["errors"].append({
-                "agent": "collect",
+                "agent": agent_name,
                 "error": str(res),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "recoverable": True,
             })
             continue
         if isinstance(res, dict):
+            has_data = False
             for key, value in res.items():
                 if key == "errors":
                     merged["errors"].extend(value)
                 else:
                     merged[key] = value
+                    if isinstance(value, list) and len(value) > 0:
+                        has_data = True
+            if has_data:
+                data_sources.append(agent_name)
+
+    merged["data_sources_available"] = data_sources
 
     return merged
 
@@ -416,6 +507,8 @@ async def run_pipeline(
         "briefing": None,
         "delivery_results": [],
         "errors": [],
+        "data_sources_available": [],
+        "validation_stats": {},
         "finished_at": None,
     }
 
