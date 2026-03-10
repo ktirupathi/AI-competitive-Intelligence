@@ -28,6 +28,7 @@ from langgraph.graph import END, StateGraph
 
 from agents.config import settings
 from agents.delivery_agent import delivery_agent
+from agents.logging import timing_tracker
 from agents.job_agent import job_agent
 from agents.news_agent import news_agent
 from agents.review_agent import review_agent
@@ -115,7 +116,8 @@ async def _with_retries(fn, state: PipelineState, agent_name: str) -> PipelineSt
     last_exc: Optional[Exception] = None
     for attempt in range(1, max_retries + 1):
         try:
-            result = await fn(state)
+            with timing_tracker.track(agent_name):
+                result = await fn(state)
             _circuit_breaker.record_success(agent_name)
             return result
         except Exception as exc:

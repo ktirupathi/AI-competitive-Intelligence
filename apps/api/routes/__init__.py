@@ -10,6 +10,7 @@ from .briefings import router as briefings_router
 from .competitors import router as competitors_router
 from .insights import router as insights_router
 from .integrations import router as integrations_router
+from .metrics import router as metrics_router
 from .public import router as public_router
 from .search import router as search_router
 from .settings import router as settings_router
@@ -29,3 +30,4 @@ api_router.include_router(settings_router, prefix="/settings", tags=["settings"]
 api_router.include_router(billing_router, prefix="/billing", tags=["billing"])
 api_router.include_router(admin_router, prefix="/admin", tags=["admin"])
 api_router.include_router(public_router, prefix="/public", tags=["public"])
+api_router.include_router(metrics_router, prefix="/metrics", tags=["metrics"])
