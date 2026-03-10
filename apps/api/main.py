@@ -11,16 +11,30 @@ from langfuse import Langfuse
 
 from .config import get_settings
 from .database import dispose_engine, init_db
+from .middleware import register_middleware
 from .routes import api_router
 
 settings = get_settings()
 
 # ---------------------------------------------------------------------------
-# Logging
+# Structured logging
 # ---------------------------------------------------------------------------
+_log_format = (
+    '{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s",'
+    '"message":"%(message)s"}'
+    if settings.environment == "production"
+    else "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+)
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    format=_log_format,
+    datefmt="%Y-%m-%dT%H:%M:%S%z",
+)
+# Silence noisy third-party loggers
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy.engine").setLevel(
+    logging.INFO if settings.database_echo else logging.WARNING
 )
 logger = logging.getLogger("scoutai")
 
@@ -34,7 +48,12 @@ if settings.sentry_dsn:
         environment=settings.environment,
         release=settings.app_version,
         enable_tracing=True,
+        send_default_pii=False,
+        attach_stacktrace=True,
+        # Profiles sample rate for performance monitoring
+        profiles_sample_rate=0.1 if settings.environment == "production" else 0.0,
     )
+    logger.info("Sentry initialized (env=%s)", settings.environment)
 
 # ---------------------------------------------------------------------------
 # Langfuse
@@ -88,6 +107,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Custom middleware (rate limiting, security headers, request logging)
+# ---------------------------------------------------------------------------
+register_middleware(app)
 
 # ---------------------------------------------------------------------------
 # Routes

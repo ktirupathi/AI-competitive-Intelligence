@@ -47,6 +47,38 @@ def monitor_single_competitor(competitor_id: str):
     _run_async(_monitor_competitor(uuid.UUID(competitor_id)))
 
 
+@celery.task(name="apps.api.tasks.monitoring.run_news_monitoring")
+def run_news_monitoring():
+    """Run news monitoring for all active competitors (twice daily)."""
+    logger.info("Starting news monitoring cycle")
+    _run_async(_news_monitoring_cycle())
+    logger.info("News monitoring cycle complete")
+
+
+async def _news_monitoring_cycle():
+    """Check news for all active competitors."""
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Competitor).where(
+                Competitor.user_id.isnot(None),
+                Competitor.track_news.is_(True),
+            )
+        )
+        competitors = list(result.scalars().all())
+
+    logger.info("Checking news for %d competitors", len(competitors))
+
+    for competitor in competitors:
+        try:
+            async with async_session_factory() as db:
+                await _check_news(db, competitor)
+                await db.commit()
+        except Exception:
+            logger.exception(
+                "Error checking news for %s (%s)", competitor.name, competitor.id
+            )
+
+
 async def _monitoring_cycle():
     """Iterate all active competitors and monitor each."""
     async with async_session_factory() as db:
