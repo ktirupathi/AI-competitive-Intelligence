@@ -143,6 +143,23 @@ class Insight(TypedDict):
     sources: List[str]
 
 
+class SignalCluster(TypedDict):
+    cluster_title: str
+    cluster_description: str
+    confidence_score: float
+    impact_score: float
+    related_signals: List[Dict[str, Any]]
+
+
+class Prediction(TypedDict):
+    prediction: str
+    confidence: float
+    timeline: str
+    evidence: List[str]
+    competitor: Optional[str]
+    category: str
+
+
 class PredictiveSignal(TypedDict):
     signal: str
     confidence: float
@@ -220,6 +237,10 @@ class PipelineState(TypedDict, total=False):
 
     # --- Social ---
     social_posts: List[SocialPost]
+
+    # --- Clustering & Predictions ---
+    signal_clusters: List[SignalCluster]
+    predictions: List[Prediction]
 
     # --- Synthesis ---
     insights: List[Insight]

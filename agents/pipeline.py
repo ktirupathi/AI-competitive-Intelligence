@@ -3,12 +3,13 @@ Scout AI - Main LangGraph Pipeline
 
 Orchestrates the full competitive-intelligence workflow:
 
-    collect data  ->  detect changes  ->  score signals
-                  ->  synthesise      ->  generate briefing
-                  ->  deliver
+    collect signals  ->  cluster signals  ->  generate predictions
+                     ->  synthesise       ->  generate briefing
+                     ->  deliver
 
 Collection agents (web_monitor, news, jobs, reviews, social) run in
-parallel fan-out.  Synthesis and delivery run sequentially afterwards.
+parallel fan-out.  Clustering, prediction, synthesis, and delivery
+run sequentially afterwards.
 """
 
 from __future__ import annotations
@@ -98,6 +99,153 @@ async def node_social(state: PipelineState) -> PipelineState:
     return await _with_retries(social_agent, state, "social")
 
 
+async def node_cluster_signals(state: PipelineState) -> PipelineState:
+    """Cluster related signals from all collection agents."""
+    return await _cluster_and_predict(state, phase="cluster")
+
+
+async def node_predict(state: PipelineState) -> PipelineState:
+    """Generate predictions from clustered signals."""
+    return await _cluster_and_predict(state, phase="predict")
+
+
+async def _cluster_and_predict(state: PipelineState, phase: str) -> PipelineState:
+    """Run clustering or prediction in-process (no separate agent module needed).
+
+    This uses the pipeline's collected data to build lightweight signal
+    representations, then calls Claude for clustering and prediction.
+    """
+    import json
+
+    import anthropic
+
+    errors: list = list(state.get("errors", []))
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic.api_key)
+
+    if phase == "cluster":
+        # Build signal summaries from all sources
+        signal_texts: list[str] = []
+        for c in state.get("changes", []):
+            signal_texts.append(f"(website_change) {c.get('diff_summary', c.get('change_category', ''))} [{c.get('significance', 'medium')}]")
+        for n in state.get("news_items", []):
+            signal_texts.append(f"(news) {n.get('title', '')}. {n.get('summary', '')}")
+        for j in state.get("job_postings", []):
+            signal_texts.append(f"(job) {j.get('title', '')} - {j.get('department', '')} [{j.get('seniority', '')}]")
+        for r in state.get("reviews", []):
+            signal_texts.append(f"(review) {r.get('title', '')} - pros: {r.get('pros', '')} cons: {r.get('cons', '')}")
+        for s in state.get("social_posts", []):
+            signal_texts.append(f"(social/{s.get('platform', '')}) {s.get('content', '')[:150]}")
+
+        if len(signal_texts) < 3:
+            return {"signal_clusters": [], "errors": errors}
+
+        numbered = [f"[{i}] {t}" for i, t in enumerate(signal_texts[:60])]
+        prompt = (
+            "Group these competitive intelligence signals into thematic clusters.\n\n"
+            "SIGNALS:\n" + "\n".join(numbered) + "\n\n"
+            "Return ONLY valid JSON array (no fences):\n"
+            '[{"cluster_title":"...","cluster_description":"...","confidence_score":0.7,'
+            '"impact_score":0.8,"related_signal_indices":[0,3,7]}]\n'
+            "Rules: 2+ signals per cluster, max 8 clusters, skip noise signals."
+        )
+        try:
+            resp = await client.messages.create(
+                model=settings.anthropic.synthesis_model,
+                max_tokens=4096,
+                temperature=0.2,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = resp.content[0].text.strip()
+            if raw.startswith("```"):
+                lines = raw.split("\n")
+                lines = [ln for ln in lines if not ln.strip().startswith("```")]
+                raw = "\n".join(lines)
+            clusters_raw = json.loads(raw)
+
+            clusters = []
+            for c in clusters_raw:
+                if not isinstance(c, dict):
+                    continue
+                indices = c.get("related_signal_indices", [])
+                related = []
+                for idx in indices:
+                    if isinstance(idx, int) and 0 <= idx < len(signal_texts):
+                        related.append({"index": idx, "text": signal_texts[idx]})
+                if len(related) >= 2:
+                    clusters.append({
+                        "cluster_title": str(c.get("cluster_title", "")),
+                        "cluster_description": str(c.get("cluster_description", "")),
+                        "confidence_score": max(0.0, min(1.0, float(c.get("confidence_score", 0.5)))),
+                        "impact_score": max(0.0, min(1.0, float(c.get("impact_score", 0.5)))),
+                        "related_signals": related,
+                    })
+            clusters.sort(key=lambda x: x["impact_score"], reverse=True)
+            logger.info("Clustered %d signals into %d clusters", len(signal_texts), len(clusters))
+            return {"signal_clusters": clusters, "errors": errors}
+        except Exception as exc:
+            logger.error("Signal clustering failed: %s", exc)
+            errors.append({"agent": "clustering", "error": str(exc), "timestamp": datetime.now(timezone.utc).isoformat()})
+            return {"signal_clusters": [], "errors": errors}
+
+    else:  # predict
+        clusters = state.get("signal_clusters", [])
+        if not clusters:
+            return {"predictions": [], "errors": errors}
+
+        cluster_summaries = []
+        for i, cl in enumerate(clusters[:8]):
+            sigs = [s.get("text", "") for s in cl.get("related_signals", [])[:4]]
+            cluster_summaries.append(
+                f"Cluster {i+1}: {cl['cluster_title']}\n"
+                f"  {cl['cluster_description']}\n"
+                f"  Impact: {cl['impact_score']:.0%}, Confidence: {cl['confidence_score']:.0%}\n"
+                f"  Signals: {'; '.join(sigs)}"
+            )
+
+        comp_names = [c["name"] for c in state.get("competitors", [])]
+        prompt = (
+            f"Based on signal clusters for {', '.join(comp_names)}, "
+            "generate strategic predictions.\n\n"
+            + "\n\n".join(cluster_summaries) + "\n\n"
+            "Return ONLY valid JSON array (no fences):\n"
+            '[{"prediction":"...","confidence":0.7,"timeline":"next 60 days",'
+            '"evidence":["..."],"competitor":"name or null","category":"product_launch|...|other"}]\n'
+            "Max 5 predictions, sorted by confidence."
+        )
+        try:
+            resp = await client.messages.create(
+                model=settings.anthropic.synthesis_model,
+                max_tokens=4096,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = resp.content[0].text.strip()
+            if raw.startswith("```"):
+                lines = raw.split("\n")
+                lines = [ln for ln in lines if not ln.strip().startswith("```")]
+                raw = "\n".join(lines)
+            preds_raw = json.loads(raw)
+            predictions = []
+            for p in preds_raw:
+                if not isinstance(p, dict):
+                    continue
+                predictions.append({
+                    "prediction": str(p.get("prediction", "")),
+                    "confidence": max(0.0, min(1.0, float(p.get("confidence", 0.5)))),
+                    "timeline": str(p.get("timeline", "unknown")),
+                    "evidence": [str(e) for e in p.get("evidence", [])],
+                    "competitor": p.get("competitor"),
+                    "category": str(p.get("category", "other")),
+                })
+            predictions.sort(key=lambda x: x["confidence"], reverse=True)
+            logger.info("Generated %d predictions from %d clusters", len(predictions), len(clusters))
+            return {"predictions": predictions, "errors": errors}
+        except Exception as exc:
+            logger.error("Prediction generation failed: %s", exc)
+            errors.append({"agent": "prediction", "error": str(exc), "timestamp": datetime.now(timezone.utc).isoformat()})
+            return {"predictions": [], "errors": errors}
+
+
 async def node_synthesis(state: PipelineState) -> PipelineState:
     return await _with_retries(synthesis_agent, state, "synthesis")
 
@@ -157,18 +305,22 @@ def build_pipeline() -> StateGraph:
     competitive-intelligence pipeline.
 
     Graph topology:
-        START -> collect -> synthesis -> delivery -> END
+        START -> collect -> cluster -> predict -> synthesis -> delivery -> END
     """
     graph = StateGraph(PipelineState)
 
     # Register nodes
     graph.add_node("collect", node_collect)
+    graph.add_node("cluster", node_cluster_signals)
+    graph.add_node("predict", node_predict)
     graph.add_node("synthesis", node_synthesis)
     graph.add_node("delivery", node_delivery)
 
-    # Define edges (linear after fan-out collection)
+    # Define edges
     graph.set_entry_point("collect")
-    graph.add_edge("collect", "synthesis")
+    graph.add_edge("collect", "cluster")
+    graph.add_edge("cluster", "predict")
+    graph.add_edge("predict", "synthesis")
     graph.add_edge("synthesis", "delivery")
     graph.add_edge("delivery", END)
 
@@ -182,7 +334,7 @@ def build_pipeline_sequential() -> StateGraph:
 
     Graph topology:
         START -> web_monitor -> news -> jobs -> reviews -> social
-              -> synthesis -> delivery -> END
+              -> cluster -> predict -> synthesis -> delivery -> END
     """
     graph = StateGraph(PipelineState)
 
@@ -191,6 +343,8 @@ def build_pipeline_sequential() -> StateGraph:
     graph.add_node("jobs", node_jobs)
     graph.add_node("reviews", node_reviews)
     graph.add_node("social", node_social)
+    graph.add_node("cluster", node_cluster_signals)
+    graph.add_node("predict", node_predict)
     graph.add_node("synthesis", node_synthesis)
     graph.add_node("delivery", node_delivery)
 
@@ -199,7 +353,9 @@ def build_pipeline_sequential() -> StateGraph:
     graph.add_edge("news", "jobs")
     graph.add_edge("jobs", "reviews")
     graph.add_edge("reviews", "social")
-    graph.add_edge("social", "synthesis")
+    graph.add_edge("social", "cluster")
+    graph.add_edge("cluster", "predict")
+    graph.add_edge("predict", "synthesis")
     graph.add_edge("synthesis", "delivery")
     graph.add_edge("delivery", END)
 
@@ -254,6 +410,8 @@ async def run_pipeline(
         "job_postings": [],
         "reviews": [],
         "social_posts": [],
+        "signal_clusters": [],
+        "predictions": [],
         "insights": [],
         "briefing": None,
         "delivery_results": [],
