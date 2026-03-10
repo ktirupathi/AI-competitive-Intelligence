@@ -42,8 +42,9 @@ class TestCompetitorSchemas:
             CompetitorCreate(name="Acme", domain="")
 
     def test_name_max_length(self) -> None:
-        with pytest.raises(ValidationError):
-            CompetitorCreate(name="A" * 256, domain="acme.com")
+        # Name gets truncated to 200 by the sanitiser, then max_length=200 applies
+        data = CompetitorCreate(name="A" * 256, domain="acme.com")
+        assert len(data.name) == 200
 
     def test_domain_max_length(self) -> None:
         with pytest.raises(ValidationError):
@@ -107,3 +108,50 @@ class TestCompetitorInputValidation:
         assert data.track_jobs is True
         assert data.track_reviews is True
         assert data.track_social is True
+
+
+class TestInputSanitisation:
+    """Tests for HTML stripping, whitespace trimming, and length enforcement."""
+
+    def test_name_strips_html_tags(self) -> None:
+        data = CompetitorCreate(
+            name='<script>alert("xss")</script>Acme Corp',
+            domain="acme.com",
+        )
+        assert "<script>" not in data.name
+        assert "Acme Corp" in data.name
+
+    def test_name_collapses_whitespace(self) -> None:
+        data = CompetitorCreate(name="  Acme   Corp  ", domain="acme.com")
+        assert data.name == "Acme Corp"
+
+    def test_name_truncated_to_200(self) -> None:
+        data = CompetitorCreate(name="A" * 300, domain="acme.com")
+        assert len(data.name) == 200
+
+    def test_description_strips_html(self) -> None:
+        data = CompetitorCreate(
+            name="Acme",
+            domain="acme.com",
+            description="<b>Bold</b> description <img src=x>",
+        )
+        assert "<b>" not in data.description
+        assert "<img" not in data.description
+        assert "Bold description" in data.description
+
+    def test_domain_strips_trailing_slash(self) -> None:
+        data = CompetitorCreate(name="Acme", domain="acme.com/")
+        assert data.domain == "acme.com"
+
+    def test_domain_strips_whitespace(self) -> None:
+        data = CompetitorCreate(name="Acme", domain="  acme.com  ")
+        assert data.domain == "acme.com"
+
+    def test_industry_sanitised(self) -> None:
+        data = CompetitorCreate(
+            name="Acme",
+            domain="acme.com",
+            industry="<em>SaaS</em>  &  Cloud",
+        )
+        assert "<em>" not in data.industry
+        assert "SaaS & Cloud" in data.industry
