@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     clerk_jwks_url: str = "https://api.clerk.dev/v1/jwks"
     clerk_webhook_secret: str = ""
     clerk_issuer: str = ""
+    clerk_enforce_mfa: bool = False  # Enforce MFA for all authenticated endpoints
 
     # Stripe
     stripe_secret_key: str = ""
@@ -85,6 +86,10 @@ class Settings(BaseSettings):
     monitoring_interval_hours: int = 6
     briefing_generation_day: str = "monday"
     briefing_generation_hour: int = 7
+
+    # Flower (Celery monitoring)
+    flower_port: int = 5555
+    flower_basic_auth: str = ""  # username:password for Flower dashboard
 
 
 @lru_cache

@@ -30,7 +30,8 @@
     "react-dom": "^18.2.0",
     "recharts": "^2.10.4",
     "stripe": "^14.14.0",
-    "tailwind-merge": "^2.2.1"
+    "tailwind-merge": "^2.2.1",
+    "zod": "^3.22.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.5",

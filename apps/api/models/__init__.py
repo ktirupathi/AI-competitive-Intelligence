@@ -1,5 +1,7 @@
 """Export all ORM models."""
 
+from .alert import AgentRun, Alert, CustomerAnalytics, Referral
+from .audit_log import AuditLog
 from .briefing import Briefing
 from .change import Change
 from .competitor import Competitor
@@ -14,20 +16,29 @@ from .signal_cluster import SignalCluster
 from .snapshot import Snapshot
 from .social_post import SocialPost
 from .user import User
+from .workspace import Workspace, WorkspaceUsage, WorkspaceUser
 
 __all__ = [
+    "AgentRun",
+    "Alert",
+    "AuditLog",
     "Briefing",
     "Change",
     "Competitor",
+    "CustomerAnalytics",
     "Embedding",
     "Insight",
     "Integration",
     "JobPosting",
     "NewsItem",
     "Prediction",
+    "Referral",
     "Review",
     "SignalCluster",
     "Snapshot",
     "SocialPost",
     "User",
+    "Workspace",
+    "WorkspaceUsage",
+    "WorkspaceUser",
 ]

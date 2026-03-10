@@ -180,3 +180,141 @@ export interface PricingTier {
   ctaText: string;
   priceId?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Workspace types
+// ---------------------------------------------------------------------------
+
+export interface Workspace {
+  id: string;
+  name: string;
+  slug: string;
+  ownerId: string;
+  plan: "starter" | "growth" | "enterprise";
+  logoUrl?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceMember {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  role: "owner" | "admin" | "member" | "viewer";
+  invitedEmail?: string;
+  inviteStatus: "pending" | "accepted" | "declined";
+  createdAt: string;
+}
+
+export interface WorkspaceUsage {
+  workspaceId: string;
+  competitorsCount: number;
+  briefingsGenerated: number;
+  alertsSent: number;
+  searchesPerformed: number;
+  apiCalls: number;
+  maxCompetitors: number;
+  maxBriefingsPerMonth: number;
+  maxAlertsPerMonth: number;
+  maxSearchesPerMonth: number;
+  periodStart: string;
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Alert types
+// ---------------------------------------------------------------------------
+
+export interface Alert {
+  id: string;
+  workspaceId: string;
+  competitorId?: string;
+  alertType: "change" | "news" | "job" | "review" | "social" | "insight";
+  severity: "critical" | "high" | "medium" | "low";
+  title: string;
+  summary?: string;
+  significanceScore: number;
+  deliveredVia?: string[];
+  deliveredAt?: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Timeline types
+// ---------------------------------------------------------------------------
+
+export interface TimelineEvent {
+  type: "change" | "news" | "job" | "review" | "social";
+  id: string;
+  title: string;
+  summary?: string;
+  severity?: string;
+  timestamp: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CompetitorTimeline {
+  competitorId: string;
+  competitorName: string;
+  events: TimelineEvent[];
+  total: number;
+}
+
+// ---------------------------------------------------------------------------
+// Search types
+// ---------------------------------------------------------------------------
+
+export interface SearchResult {
+  id: string;
+  sourceType: string;
+  sourceId: string;
+  contentText: string;
+  similarity: number;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  query: string;
+  total: number;
+}
+
+// ---------------------------------------------------------------------------
+// Admin types
+// ---------------------------------------------------------------------------
+
+export interface AgentHealth {
+  agentName: string;
+  lastRun?: string;
+  status: "running" | "success" | "failed" | "no_runs";
+  errorCount: number;
+  totalRuns: number;
+  avgDurationSeconds?: number;
+  lastError?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  workspaceId?: string;
+  userId?: string;
+  action: string;
+  resource: string;
+  resourceId?: string;
+  metadata?: Record<string, unknown>;
+  ipAddress?: string;
+  timestamp: string;
+}
+
+// ---------------------------------------------------------------------------
+// Referral types
+// ---------------------------------------------------------------------------
+
+export interface Referral {
+  id: string;
+  referralCode: string;
+  referredEmail?: string;
+  status: "pending" | "signed_up" | "converted" | "rewarded";
+  rewardApplied: boolean;
+  createdAt: string;
+}
