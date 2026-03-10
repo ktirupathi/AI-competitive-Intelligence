@@ -293,7 +293,10 @@ def register_middleware(app: FastAPI) -> None:
     The request ID middleware is outermost so every subsequent middleware
     and handler can access ``request.state.request_id``.
     """
+    from .versioning import APIVersionHeaderMiddleware
+
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(APIVersionHeaderMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(MFAEnforcementMiddleware)
     app.add_middleware(RateLimitMiddleware)
