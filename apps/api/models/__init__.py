@@ -8,7 +8,9 @@ from .insight import Insight
 from .integration import Integration
 from .job_posting import JobPosting
 from .news import NewsItem
+from .prediction import Prediction
 from .review import Review
+from .signal_cluster import SignalCluster
 from .snapshot import Snapshot
 from .social_post import SocialPost
 from .user import User
@@ -22,7 +24,9 @@ __all__ = [
     "Integration",
     "JobPosting",
     "NewsItem",
+    "Prediction",
     "Review",
+    "SignalCluster",
     "Snapshot",
     "SocialPost",
     "User",

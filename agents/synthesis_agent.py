@@ -160,9 +160,12 @@ async def synthesis_agent(state: PipelineState) -> PipelineState:
     """
     LangGraph node: synthesise all collected signals into a strategic briefing.
 
+    Pipeline: signals -> clustering -> predictions -> insight generation -> briefing
+
     Reads:
         state["competitors"], state["changes"], state["news_items"],
-        state["job_postings"], state["reviews"], state["social_posts"]
+        state["job_postings"], state["reviews"], state["social_posts"],
+        state["signal_clusters"], state["predictions"]
     Writes:
         state["insights"], state["briefing"]
     """
@@ -172,6 +175,8 @@ async def synthesis_agent(state: PipelineState) -> PipelineState:
     job_postings = state.get("job_postings", [])
     reviews = state.get("reviews", [])
     social_posts = state.get("social_posts", [])
+    signal_clusters = state.get("signal_clusters", [])
+    predictions = state.get("predictions", [])
     errors: List[Dict[str, Any]] = list(state.get("errors", []))
 
     # Check if we have any signals at all
@@ -184,13 +189,15 @@ async def synthesis_agent(state: PipelineState) -> PipelineState:
             "errors": errors,
         }
 
-    # Build the synthesis prompt
+    # Build the synthesis prompt with clustering and prediction context
     user_msg = SYNTHESIS_USER.format(
         changes_json=_safe_json(changes),
         news_json=_safe_json(news_items),
         jobs_json=_safe_json(job_postings),
         reviews_json=_safe_json(reviews),
         social_json=_safe_json(social_posts),
+        clusters_json=_safe_json(signal_clusters) if signal_clusters else "No clusters generated.",
+        predictions_json=_safe_json(predictions) if predictions else "No predictions generated.",
         competitors_json=_safe_json(competitors),
     )
 

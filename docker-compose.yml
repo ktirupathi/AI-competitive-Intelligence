@@ -14,6 +14,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./database/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql
       - ./database/migrations/002_schema_enhancements.sql:/docker-entrypoint-initdb.d/002_schema_enhancements.sql
+      - ./database/migrations/003_clustering_predictions.sql:/docker-entrypoint-initdb.d/003_clustering_predictions.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U scout"]
       interval: 5s
