@@ -31,7 +31,9 @@ class SignalCluster(Base):
 
     source_types: Mapped[list | None] = mapped_column(JSONB, default=list)
     related_signal_ids: Mapped[list | None] = mapped_column(JSONB, default=list)
-    metadata: Mapped[dict | None] = mapped_column(JSONB, default=dict)
+    extra_metadata: Mapped[dict | None] = mapped_column(
+        "metadata", JSONB, default=dict
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

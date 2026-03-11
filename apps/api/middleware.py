@@ -1,7 +1,8 @@
-"""Security, rate limiting, and MFA enforcement middleware."""
+"""Security, rate limiting, MFA enforcement, and request ID middleware."""
 
 import logging
 import time
+import uuid
 from typing import Callable
 
 from fastapi import FastAPI, Request, Response, status
@@ -50,13 +51,23 @@ _global_limiter = _TokenBucket(rate=1.0, capacity=60)
 # Stricter limit for auth endpoints: 10 requests per minute per IP
 _auth_limiter = _TokenBucket(rate=10.0 / 60.0, capacity=10)
 
-# Endpoint-specific rate limiters: 10 requests per minute
+# Endpoint-specific rate limiters
 _ENDPOINT_LIMITERS = {
     "/competitors": _TokenBucket(rate=10.0 / 60.0, capacity=10),
     "/briefings": _TokenBucket(rate=10.0 / 60.0, capacity=10),
     "/alerts": _TokenBucket(rate=10.0 / 60.0, capacity=10),
     "/search": _TokenBucket(rate=10.0 / 60.0, capacity=10),
 }
+
+# Stricter limiters for write-heavy / expensive endpoints (method-aware)
+# 5 per hour for briefing generation, 20 per hour for competitor creation
+_STRICT_LIMITERS: dict[tuple[str, str], _TokenBucket] = {
+    ("POST", "/briefings/generate"): _TokenBucket(rate=5.0 / 3600.0, capacity=5),
+    ("POST", "/competitors"): _TokenBucket(rate=20.0 / 3600.0, capacity=20),
+}
+
+# Paths exempt from all rate limiting
+_RATE_LIMIT_EXEMPT_PATHS = {"/health", "/", "/api/docs", "/api/redoc", "/api/openapi.json"}
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -71,11 +82,31 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable
     ) -> Response:
-        client_ip = request.client.host if request.client else "unknown"
-
         path = request.url.path
 
-        # Check auth limiter first
+        # Exempt health / docs from rate limiting
+        if path in _RATE_LIMIT_EXEMPT_PATHS:
+            return await call_next(request)
+
+        client_ip = request.client.host if request.client else "unknown"
+        method = request.method
+
+        # Check strict (method, path-suffix) limiters first
+        for (m, suffix), strict_limiter in _STRICT_LIMITERS.items():
+            if method == m and path.endswith(suffix):
+                if not strict_limiter.allow(client_ip):
+                    logger.warning(
+                        "Strict rate limit exceeded for %s %s %s",
+                        client_ip, method, path,
+                    )
+                    return JSONResponse(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        content={"detail": "Too many requests. Please try again later."},
+                        headers={"Retry-After": "3600"},
+                    )
+                break
+
+        # Check auth limiter
         if "/auth/" in path:
             limiter = _auth_limiter
         else:
@@ -210,8 +241,27 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Attach a unique request ID to every request.
+
+    The ID is stored on ``request.state.request_id`` and returned in the
+    ``X-Request-ID`` response header so that clients can correlate logs.
+    """
+
+    async def dispatch(
+        self, request: Request, call_next: Callable
+    ) -> Response:
+        # Allow callers to forward their own request ID
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = request_id
+
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Log request method, path, status, and latency."""
+    """Log request method, path, status, and latency (includes request ID)."""
 
     async def dispatch(
         self, request: Request, call_next: Callable
@@ -224,8 +274,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if request.url.path in ("/health", "/"):
             return response
 
+        request_id = getattr(request.state, "request_id", "-")
         logger.info(
-            "%s %s -> %d (%.1fms)",
+            "[%s] %s %s -> %d (%.1fms)",
+            request_id,
             request.method,
             request.url.path,
             response.status_code,
@@ -238,8 +290,14 @@ def register_middleware(app: FastAPI) -> None:
     """Register all custom middleware on the FastAPI app.
 
     Call order matters: outermost middleware is added first.
+    The request ID middleware is outermost so every subsequent middleware
+    and handler can access ``request.state.request_id``.
     """
+    from .versioning import APIVersionHeaderMiddleware
+
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(APIVersionHeaderMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(MFAEnforcementMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(RequestIDMiddleware)

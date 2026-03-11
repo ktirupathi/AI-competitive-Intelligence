@@ -3,7 +3,27 @@ Scout AI - Claude Prompt Library
 
 All prompts used by the agent pipeline are centralised here so they can be
 versioned, tested, and swapped without touching agent logic.
+
+Each prompt pair is registered in ``PROMPT_VERSIONS`` at the bottom of this
+file with a semantic version string.  Agents reference the prompt constants
+directly; the version registry is used for auditing, A/B testing, and
+migration tracking.
 """
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class PromptVersion:
+    """Immutable descriptor for a versioned prompt pair."""
+
+    name: str
+    version: str
+    system: str
+    user: str
+    description: str = ""
 
 # ---------------------------------------------------------------------------
 # Change Classification  (used by web_monitor_agent)
@@ -290,3 +310,65 @@ Generated: {generated_at}
 {plays_block}
 
 _Full briefing delivered via email. Reply in-thread for discussion._"""
+
+
+# ---------------------------------------------------------------------------
+# Prompt Version Registry
+# ---------------------------------------------------------------------------
+# Every prompt pair is registered here with a semver string.
+# Bump the version whenever a prompt is materially changed.
+
+PROMPT_VERSIONS: dict[str, PromptVersion] = {
+    "change_classification": PromptVersion(
+        name="change_classification",
+        version="1.0.0",
+        system=CHANGE_CLASSIFICATION_SYSTEM,
+        user=CHANGE_CLASSIFICATION_USER,
+        description="Classify website content changes by significance and category.",
+    ),
+    "news_analysis": PromptVersion(
+        name="news_analysis",
+        version="1.0.0",
+        system=NEWS_ANALYSIS_SYSTEM,
+        user=NEWS_ANALYSIS_USER,
+        description="Evaluate news relevance and sentiment for competitive signals.",
+    ),
+    "job_analysis": PromptVersion(
+        name="job_analysis",
+        version="1.0.0",
+        system=JOB_ANALYSIS_SYSTEM,
+        user=JOB_ANALYSIS_USER,
+        description="Extract strategic hiring signals from job postings.",
+    ),
+    "review_analysis": PromptVersion(
+        name="review_analysis",
+        version="1.0.0",
+        system=REVIEW_ANALYSIS_SYSTEM,
+        user=REVIEW_ANALYSIS_USER,
+        description="Analyse software reviews for competitive insights.",
+    ),
+    "social_classification": PromptVersion(
+        name="social_classification",
+        version="1.0.0",
+        system=SOCIAL_CLASSIFICATION_SYSTEM,
+        user=SOCIAL_CLASSIFICATION_USER,
+        description="Classify social media posts and extract strategic signals.",
+    ),
+    "synthesis": PromptVersion(
+        name="synthesis",
+        version="1.0.0",
+        system=SYNTHESIS_SYSTEM,
+        user=SYNTHESIS_USER,
+        description="Generate comprehensive briefing from all collected signals.",
+    ),
+}
+
+
+def get_prompt(name: str) -> PromptVersion:
+    """Look up a prompt by name. Raises ``KeyError`` if not found."""
+    return PROMPT_VERSIONS[name]
+
+
+def list_prompt_versions() -> dict[str, str]:
+    """Return a dict mapping prompt name to version string."""
+    return {name: pv.version for name, pv in PROMPT_VERSIONS.items()}

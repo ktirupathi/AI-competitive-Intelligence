@@ -1,17 +1,28 @@
 """Pydantic schemas for competitors."""
 
+import re
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
+
+# Regex to strip HTML tags
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _sanitise_text(value: str, max_length: int = 200) -> str:
+    """Strip HTML tags, collapse whitespace, and enforce max length."""
+    value = _HTML_TAG_RE.sub("", value)
+    value = " ".join(value.split())  # collapse whitespace
+    return value[:max_length]
 
 
 class CompetitorBase(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255)
+    name: str = Field(..., min_length=1, max_length=200)
     domain: str = Field(..., min_length=1, max_length=255)
-    description: str | None = None
+    description: str | None = Field(None, max_length=2000)
     logo_url: str | None = None
-    industry: str | None = None
+    industry: str | None = Field(None, max_length=100)
     track_website: bool = True
     track_news: bool = True
     track_jobs: bool = True
@@ -19,23 +30,74 @@ class CompetitorBase(BaseModel):
     track_social: bool = True
     social_links: dict | None = None
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def sanitise_name(cls, v: str) -> str:
+        if isinstance(v, str):
+            return _sanitise_text(v, max_length=200)
+        return v
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def sanitise_domain(cls, v: str) -> str:
+        if isinstance(v, str):
+            v = v.strip()
+            # Strip trailing slashes for consistency
+            v = v.rstrip("/")
+        return v
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def sanitise_description(cls, v: str | None) -> str | None:
+        if isinstance(v, str):
+            return _sanitise_text(v, max_length=2000)
+        return v
+
+    @field_validator("industry", mode="before")
+    @classmethod
+    def sanitise_industry(cls, v: str | None) -> str | None:
+        if isinstance(v, str):
+            return _sanitise_text(v, max_length=100)
+        return v
+
 
 class CompetitorCreate(CompetitorBase):
     pass
 
 
 class CompetitorUpdate(BaseModel):
-    name: str | None = Field(None, min_length=1, max_length=255)
+    name: str | None = Field(None, min_length=1, max_length=200)
     domain: str | None = Field(None, min_length=1, max_length=255)
-    description: str | None = None
+    description: str | None = Field(None, max_length=2000)
     logo_url: str | None = None
-    industry: str | None = None
+    industry: str | None = Field(None, max_length=100)
     track_website: bool | None = None
     track_news: bool | None = None
     track_jobs: bool | None = None
     track_reviews: bool | None = None
     track_social: bool | None = None
     social_links: dict | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def sanitise_name(cls, v: str | None) -> str | None:
+        if isinstance(v, str):
+            return _sanitise_text(v, max_length=200)
+        return v
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def sanitise_description(cls, v: str | None) -> str | None:
+        if isinstance(v, str):
+            return _sanitise_text(v, max_length=2000)
+        return v
+
+    @field_validator("industry", mode="before")
+    @classmethod
+    def sanitise_industry(cls, v: str | None) -> str | None:
+        if isinstance(v, str):
+            return _sanitise_text(v, max_length=100)
+        return v
 
 
 class CompetitorRead(CompetitorBase):
